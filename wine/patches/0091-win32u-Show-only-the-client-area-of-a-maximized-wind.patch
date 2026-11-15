@@ -1,0 +1,45 @@
+From f3bb1b2e863c56d2e196bdc690c49702b6b7f70e Mon Sep 17 00:00:00 2001
+From: chitulinux <chitulinux@invalid>
+Date: Sun, 15 Nov 2026 18:27:57 +0100
+Subject: [PATCH] win32u: Show only the client area of a maximized window with
+ an even frame.
+
+The frame of a maximized window is outside the monitor on Windows, and
+frameless windows (Qt, Electron) handle WM_NCCALCSIZE to keep only that
+much of it. The window manager places the visible rect on the monitor,
+so a 9 pixel frame showed around CHITUBOX's maximized window. Show only
+the client area of a maximized window that isn't decorated by the window
+manager and has a frame of the same width on every side; the window rect
+follows from the window manager's rect as on Windows.
+---
+ dlls/win32u/window.c | 14 +++++++++++++-
+ 1 file changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/win32u/window.c b/dlls/win32u/window.c
+index 676f8590815..dfdcb1e359e 100644
+--- a/dlls/win32u/window.c
++++ b/dlls/win32u/window.c
+@@ -2241,7 +2241,19 @@ static struct window_surface *get_window_surface( HWND hwnd, UINT swp_flags, BOO
+     else if (swp_flags & SWP_SHOWWINDOW) needs_surface = TRUE;
+     else needs_surface = !!(style & WS_VISIBLE);
+ 
+-    if (!is_child) rects->visible = get_visible_rect( hwnd, shaped, style, ex_style, rects );
++    if (!is_child)
++    {
++        rects->visible = get_visible_rect( hwnd, shaped, style, ex_style, rects );
++        /* the frame of a maximized window is outside the monitor on Windows, and frameless windows
++         * (Qt, Electron) keep only that much of it. The window manager places the visible rect on the
++         * monitor: show only the client area, else the frame shows inside the monitor */
++        if ((style & WS_MAXIMIZE) && !shaped && EqualRect( &rects->visible, &rects->window ) &&
++            rects->client.left - rects->window.left > 0 &&
++            rects->client.top - rects->window.top == rects->client.left - rects->window.left &&
++            rects->window.right - rects->client.right == rects->client.left - rects->window.left &&
++            rects->window.bottom - rects->client.bottom == rects->client.left - rects->window.left)
++            rects->visible = rects->client;
++    }
+     if (!get_surface_rect( &rects->visible, surface_rect )) needs_surface = FALSE;
+     if (!get_default_window_surface( hwnd, surface_rect, &new_surface )) return NULL;
+ 
+-- 
+2.53.0
+
