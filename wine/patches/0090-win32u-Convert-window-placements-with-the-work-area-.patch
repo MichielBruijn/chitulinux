@@ -1,0 +1,45 @@
+From 793641c1ee4e4fdf2c6e56bc5094bf4538ae0d52 Mon Sep 17 00:00:00 2001
+From: chitulinux <chitulinux@invalid>
+Date: Sun, 15 Nov 2026 18:03:39 +0100
+Subject: [PATCH] win32u: Convert window placements with the work area of the
+ primary monitor.
+
+Workspace coordinates are relative to the work area of the primary
+monitor. The conversion took the monitor of the rect, which is another
+one before and after it for a window on a second monitor: a placement
+read and set again moved the window there. Qt does that when CHITUBOX
+maximizes its frameless window, so restoring it on a laptop screen put
+it on the primary monitor.
+---
+ dlls/win32u/window.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/dlls/win32u/window.c b/dlls/win32u/window.c
+index 8bb183503d9..676f8590815 100644
+--- a/dlls/win32u/window.c
++++ b/dlls/win32u/window.c
+@@ -3040,7 +3040,9 @@ static void placement_workarea_to_screen( HWND hwnd, WINDOWPLACEMENT *wp )
+     if (style & WS_CHILD || ex_style & WS_EX_TOOLWINDOW)
+         return;
+ 
+-    mon_info = monitor_info_from_rect( wp->rcNormalPosition, get_thread_dpi() );
++    /* workspace coordinates are relative to the work area of the primary monitor, whatever monitor
++     * the window is on: the monitor of the rect differs before and after the conversion */
++    mon_info = monitor_info_from_rect( get_primary_monitor_rect( get_thread_dpi() ), get_thread_dpi() );
+ 
+     if (!empty_point( wp->ptMinPosition ))
+     {
+@@ -3071,7 +3073,9 @@ static void placement_screen_to_workarea( HWND hwnd, WINDOWPLACEMENT *wp )
+     if (style & WS_CHILD || ex_style & WS_EX_TOOLWINDOW)
+         return;
+ 
+-    mon_info = monitor_info_from_rect( wp->rcNormalPosition, get_thread_dpi() );
++    /* workspace coordinates are relative to the work area of the primary monitor, whatever monitor
++     * the window is on: the monitor of the rect differs before and after the conversion */
++    mon_info = monitor_info_from_rect( get_primary_monitor_rect( get_thread_dpi() ), get_thread_dpi() );
+ 
+     if (!empty_point( wp->ptMinPosition ))
+     {
+-- 
+2.53.0
+

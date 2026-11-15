@@ -1,0 +1,44 @@
+From 803b163ae99f4fd32b6b81c874d535566594ce9a Mon Sep 17 00:00:00 2001
+From: chitulinux <chitulinux@invalid>
+Date: Sun, 15 Nov 2026 17:56:15 +0100
+Subject: [PATCH] winex11.drv: Leave the rect of a maximized window to the
+ window manager.
+
+A configure request with the monitor's size made mutter take CHITUBOX's
+undecorated maximized window for a fullscreen one (its legacy fullscreen
+rule), after which restoring it failed, and a later move of the
+maximized window took it to another monitor. The window manager places a
+maximized window itself, and its rect comes back with the
+ConfigureNotify.
+---
+ dlls/winex11.drv/window.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/dlls/winex11.drv/window.c b/dlls/winex11.drv/window.c
+index 5d3516b1ae1..8b17608f7b1 100644
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -1461,6 +1461,20 @@ static void window_set_config( struct x11drv_win_data *data, RECT rect, BOOL abo
+         OffsetRect( new_rect, old_rect->left - new_rect->left, old_rect->top - new_rect->top );
+     }
+ 
++    /* the window manager places a maximized window itself. Asking for a monitor-sized rect made
++     * mutter take an undecorated window for a fullscreen one, and moving it took it to another
++     * monitor; its rect comes back with the ConfigureNotify */
++    if (data->managed && (mask & (CWX | CWY | CWWidth | CWHeight)) &&
++        (data->desired_state.net_wm_state & (1 << NET_WM_STATE_MAXIMIZED)) &&
++        !(data->desired_state.net_wm_state & (1 << NET_WM_STATE_FULLSCREEN)))
++    {
++        TRACE( "window %p/%lx is maximized, leaving %s to the window manager\n", data->hwnd,
++               data->whole_window, wine_dbgstr_rect(new_rect) );
++        mask &= ~(CWX | CWY | CWWidth | CWHeight);
++        *new_rect = *old_rect;
++        if (!above) return;
++    }
++
+     if (above)
+     {
+         changes.stack_mode = Above;
+-- 
+2.53.0
+
