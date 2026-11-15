@@ -1,0 +1,251 @@
+#!/bin/bash
+# ChituLinux: CHITUBOX under the bundled Wine, in its own prefix
+#
+# usage: ChituLinux-x86_64.AppImage [command | FILE...]
+#   (none) | FILE...   start CHITUBOX (installs it first when needed), opening FILEs
+#   install [EXE]      install or update CHITUBOX with its Windows installer (default: the newest in ~/Downloads)
+#   settings           scale, graphics, Wine's tools
+#   scale PERCENT|auto size of text and icons (100 = normal; auto follows the desktop)
+#   winecfg | regedit | shell
+#   stop               stop CHITUBOX and Wine
+#   integrate          (re)make the app menu entry
+#
+# environment: CHITULINUX_HOME (default ~/.local/share/chitulinux), CHITUBOX_SCALE=PERCENT, CHITUBOX_GPU=auto|intel|nvidia
+
+set -u
+HERE="$(dirname "$(readlink -f "$0")")"
+DATA="${CHITULINUX_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/chitulinux}"
+TOOLS="$HERE/usr/lib/chitulinux"
+VERSION="$(cat "$HERE/usr/share/chitulinux/VERSION" 2>/dev/null)"
+SELF="${APPIMAGE:-$(readlink -f "$0")}"
+LOG="$DATA/chitubox.log"
+export WINEPREFIX="$DATA/prefix"
+export WINE="$HERE/usr/bin/wine" WINESERVER="$HERE/usr/bin/wineserver"
+export PATH="$HERE/usr/bin:$PATH"
+export WINEDEBUG="${WINEDEBUG:-fixme-all}"
+# no Wine menu entries: they would start CHITUBOX without this Wine
+export WINEDLLOVERRIDES="winemenubuilder.exe=d${WINEDLLOVERRIDES:+;$WINEDLLOVERRIDES}"
+# no drive letters for USB sticks and SD cards (they stay reachable through Z:)
+export DBUS_SYSTEM_BUS_ADDRESS="unix:path=/dev/null/no-system-bus"
+[ -z "${XCURSOR_SIZE:-}" ] && export XCURSOR_SIZE=$("$TOOLS/desktop-dpi" --cursor 2>/dev/null || echo 24)
+APPDIR='C:\Program Files\CHITUBOX'
+EXE="$WINEPREFIX/drive_c/Program Files/CHITUBOX/CHITUBOX.exe"
+ICON="$DATA/chitubox.png"
+DESKTOP="${XDG_DATA_HOME:-$HOME/.local/share}/applications/chitulinux-chitubox.desktop"
+mkdir -p "$DATA"
+
+msg() { echo "chitulinux: $*" >&2; }
+gui() { [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v zenity >/dev/null; }
+
+tell()  # info|error|question TEXT
+{
+    msg "$(printf '%b' "$2" | sed 's/<[^>]*>//g' | tr -s '\n' ' ')"
+    if gui; then
+        zenity --"$1" --width=460 --title=ChituLinux --text="$2" 2>/dev/null
+    else
+        [ "$1" != error ]
+    fi
+}
+
+# --- prefix --------------------------------------------------------------------------------------------
+
+make_prefix()
+{
+    [ -f "$WINEPREFIX/.chitulinux" ] && return
+    msg "making the Wine prefix in $WINEPREFIX"
+    # CHITUBOX uses neither .NET (Mono) nor Internet Explorer (Gecko): no download dialogs for them
+    WINEDLLOVERRIDES="$WINEDLLOVERRIDES;mscoree,mshtml=" "$WINE" wineboot -i >> "$LOG" 2>&1 ||
+        { tell error "Wine could not make its prefix, see $LOG."; exit 1; }
+    # DXVK: Qt Quick draws with Direct3D 11, which Wine's own (on OpenGL) does slowly
+    local d arch
+    for arch in x64:system32 x32:syswow64; do
+        for d in "$TOOLS/dxvk/${arch%%:*}"/*.dll; do
+            cp -f "$d" "$WINEPREFIX/drive_c/windows/${arch#*:}/"
+        done
+    done
+    for d in d3d9 d3d10core d3d11 dxgi; do
+        "$WINE" reg add 'HKCU\Software\Wine\DllOverrides' /v "$d" /d native /f >/dev/null 2>&1
+    done
+    "$WINESERVER" -w
+    touch "$WINEPREFIX/.chitulinux"
+}
+
+# Z: is the home folder, not /; and no letters Wine made for removable drives
+fix_drives()
+{
+    local l
+    [ "$(readlink "$WINEPREFIX/dosdevices/z:")" = "$HOME" ] || ln -sfn "$HOME" "$WINEPREFIX/dosdevices/z:"
+    for l in "$WINEPREFIX"/dosdevices/?:; do
+        case "$(readlink "$l")" in /media/*|/run/media/*) rm -f "$l" ;; esac
+    done
+    for l in "$WINEPREFIX"/dosdevices/?::; do [ -L "${l%:}" ] || rm -f "$l"; done
+}
+
+# the newest CHITUBOX installer in the usual places
+find_installer()
+{
+    ls -1 "$HOME/Downloads"/CHITUBOX*Installer*.exe "$HOME"/CHITUBOX*Installer*.exe \
+        "$(xdg-user-dir DOWNLOAD 2>/dev/null)"/CHITUBOX*Installer*.exe 2>/dev/null | sort -uV | tail -1
+}
+
+install_chitubox()  # [INSTALLER]
+{
+    local exe="${1:-}"
+    [ -n "$exe" ] || exe="$(find_installer)"
+    if [ -z "$exe" ] && gui; then
+        tell info "ChituLinux needs CHITUBOX's Windows installer (CHITUBOX_WIN64_Installer_….exe).\n\nDownload it from chitubox.com (Windows, 64-bit) and choose it in the next window." || exit 1
+        xdg-open https://www.chitubox.com/en/download/chitubox-free >/dev/null 2>&1 &
+        exe="$(zenity --file-selection --title='CHITUBOX installer' --filename="$HOME/Downloads/" \
+            --file-filter='CHITUBOX installer | *.exe' 2>/dev/null)"
+    fi
+    [ -f "$exe" ] || { tell error "No CHITUBOX installer found."; exit 1; }
+    make_prefix
+    fix_drives
+    msg "installing $(basename "$exe")"
+    stop_wine
+    local root='C:\Program Files\CHITUBOX' rc
+    # Qt's installer: an update goes through its maintenance tool, a first installation installs
+    (
+        if [ -f "$EXE" ]; then
+            "$WINE" "$exe" install --root "$root" --accept-licenses --accept-messages --confirm-command \
+                >> "$LOG" 2>&1 || {
+                # Qt's installer refuses a folder with an installation: remove it with its own uninstaller
+                "$WINE" "$WINEPREFIX/drive_c/Program Files/CHITUBOX/Uninstall.exe" purge --confirm-command >> "$LOG" 2>&1
+                "$WINE" "$exe" install --root "$root" --accept-licenses --accept-messages --confirm-command >> "$LOG" 2>&1
+            }
+        else
+            "$WINE" "$exe" install --root "$root" --accept-licenses --accept-messages --confirm-command >> "$LOG" 2>&1
+        fi
+        echo $? > "$DATA/.install-rc"
+    ) | if gui; then zenity --progress --pulsate --auto-close --no-cancel --title=ChituLinux \
+            --text="Installing $(basename "$exe")…" 2>/dev/null; else cat; fi
+    rc="$(cat "$DATA/.install-rc" 2>/dev/null)"; rm -f "$DATA/.install-rc"
+    "$WINESERVER" -w
+    [ "$rc" = 0 ] && [ -f "$EXE" ] || { tell error "Installing CHITUBOX failed, see $LOG."; exit 1; }
+    integrate
+    msg "CHITUBOX installed"
+}
+
+# --- settings at start ---------------------------------------------------------------------------------
+
+set_dpi() { "$WINE" reg add 'HKCU\Control Panel\Desktop' /v LogPixels /t REG_DWORD /d "$1" /f >/dev/null 2>&1; }
+
+# a fixed scale (settings), else the desktop's
+apply_scale()
+{
+    local s="${CHITUBOX_SCALE:-$(cat "$DATA/scale" 2>/dev/null)}"
+    case "$s" in
+        ''|auto) set_dpi "$("$TOOLS/desktop-dpi" 2>/dev/null || echo 96)" ;;
+        *[!0-9]*) msg "scale $s is not a percentage" ;;
+        *) set_dpi $(( s * 96 / 100 )) ;;
+    esac
+}
+
+setup_gpu()
+{
+    local mode="${CHITUBOX_GPU:-$(cat "$DATA/gpu" 2>/dev/null)}"
+    case "${mode:-auto}" in
+        intel)  export DXVK_FILTER_DEVICE_NAME="${DXVK_FILTER_DEVICE_NAME:-Intel}" ;;
+        nvidia) export DXVK_FILTER_DEVICE_NAME="${DXVK_FILTER_DEVICE_NAME:-NVIDIA}"
+                export __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only ;;
+    esac
+    msg "graphics ${mode:-auto}${DXVK_FILTER_DEVICE_NAME:+ ($DXVK_FILTER_DEVICE_NAME)}"
+}
+
+# --- running -------------------------------------------------------------------------------------------
+
+stop_wine() { "$WINESERVER" -k 2>/dev/null; "$WINESERVER" -w 2>/dev/null; }
+
+# the menu entry and the icon from CHITUBOX.exe; Exec follows this AppImage when it moves
+integrate()
+{
+    [ -f "$EXE" ] || return 0
+    python3 "$TOOLS/exeicon.py" "$EXE" "$ICON" >> "$LOG" 2>&1 || cp "$HERE/chitulinux.png" "$ICON"
+    mkdir -p "$(dirname "$DESKTOP")"
+    local q
+    q="$(printf '%q' "$SELF")"
+    cat > "$DESKTOP.tmp" <<EOF
+[Desktop Entry]
+Type=Application
+Name=CHITUBOX
+Comment=Resin 3D printing slicer (ChituLinux $VERSION)
+Exec=$q %F
+Icon=$ICON
+Terminal=false
+Categories=Graphics;3DGraphics;Engineering;
+MimeType=application/x-chitubox;model/stl;model/obj;model/3mf;
+StartupWMClass=chitubox.exe
+StartupNotify=true
+Actions=settings;winecfg;stop;
+
+[Desktop Action settings]
+Name=Settings (scaling, graphics, Wine)
+Exec=$q settings
+
+[Desktop Action winecfg]
+Name=Wine configuration
+Exec=$q winecfg
+
+[Desktop Action stop]
+Name=Stop CHITUBOX
+Exec=$q stop
+EOF
+    cmp -s "$DESKTOP.tmp" "$DESKTOP" && rm -f "$DESKTOP.tmp" || mv -f "$DESKTOP.tmp" "$DESKTOP"
+    # CHITUBOX projects open with CHITUBOX; STL and others only offer it
+    local mime="${XDG_DATA_HOME:-$HOME/.local/share}/mime"
+    if [ ! -f "$mime/packages/chitulinux.xml" ]; then
+        mkdir -p "$mime/packages"
+        cat > "$mime/packages/chitulinux.xml" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-chitubox">
+    <comment>CHITUBOX project</comment>
+    <glob pattern="*.chitubox"/>
+  </mime-type>
+</mime-info>
+EOF
+        update-mime-database "$mime" >/dev/null 2>&1
+        xdg-mime default chitulinux-chitubox.desktop application/x-chitubox 2>/dev/null
+    fi
+    update-desktop-database "$(dirname "$DESKTOP")" >/dev/null 2>&1
+    return 0
+}
+
+start_chitubox()  # FILE...
+{
+    [ -f "$EXE" ] || install_chitubox
+    fix_drives
+    apply_scale
+    setup_gpu
+    # the desktop entry points at this AppImage, also after it moved or was renamed
+    grep -qsF "Exec=$(printf '%q' "$SELF") %F" "$DESKTOP" || integrate
+    # Qt WebEngine shares its frames with Qt Quick as Direct3D 11 shared textures; DXVK only has those in
+    # Proton. Its pages (login, news) draw fine without the GPU
+    export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---disable-gpu}"
+    export DXVK_LOG_LEVEL="${DXVK_LOG_LEVEL:-warn}" DXVK_LOG_PATH="${DXVK_LOG_PATH:-none}"
+    local args=() f
+    for f in "$@"; do
+        [ -e "$f" ] && f="$("$WINE" winepath -w "$(readlink -f "$f")" 2>/dev/null)"
+        args+=("$f")
+    done
+    msg "ChituLinux $VERSION, $(date '+%F %T')"
+    cd "$WINEPREFIX/drive_c/Program Files/CHITUBOX" || exit 1
+    exec "$WINE" "$EXE" "${args[@]}"
+}
+
+case "${1:-}" in
+    install)   shift; install_chitubox "${1:-}" ;;
+    settings)  export CHITULINUX_RUN="$SELF" CHITULINUX_HOME="$DATA"
+               python3 "$TOOLS/settings.py" 2>>"$LOG" || [ $? != 2 ] || exec "$0" winecfg ;;
+    scale)     case "${2:-}" in
+                   auto) rm -f "$DATA/scale"; msg "scale follows the desktop" ;;
+                   ''|*[!0-9]*) msg "usage: scale PERCENT|auto"; exit 1 ;;
+                   *) echo "$2" > "$DATA/scale"; msg "scale $2% from the next start" ;;
+               esac ;;
+    winecfg|regedit) make_prefix; exec "$WINE" "$1" ;;
+    shell)     msg "WINEPREFIX=$WINEPREFIX, wine is on PATH"; exec "${SHELL:-bash}" ;;
+    stop)      stop_wine ;;
+    integrate) integrate ;;
+    -h|--help|help) sed -n '2,/^$/s/^# \{0,1\}//p' "$0" ;;
+    *)         mkdir -p "$DATA"; start_chitubox "$@" >> "$LOG" 2>&1 ;;
+esac

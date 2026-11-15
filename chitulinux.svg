@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f2a44"/>
+      <stop offset="1" stop-color="#0d1322"/>
+    </linearGradient>
+    <linearGradient id="resin" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#38d6c4"/>
+      <stop offset="1" stop-color="#1a8f9e"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="48" fill="url(#bg)"/>
+  <!-- build plate and its arm -->
+  <rect x="122" y="34" width="12" height="46" rx="3" fill="#9aa8c4"/>
+  <rect x="68" y="76" width="120" height="14" rx="4" fill="#c9d3e6"/>
+  <!-- the printed part, upside down, in layers -->
+  <path d="M92 90 h72 l-10 22 h-52 z" fill="#e8eef9"/>
+  <path d="M102 114 h52 l-8 18 h-36 z" fill="#d4dcec"/>
+  <path d="M110 134 h36 l-6 16 h-24 z" fill="#bfc9de"/>
+  <!-- resin vat -->
+  <path d="M52 160 h152 l-12 52 a10 10 0 0 1 -10 8 h-108 a10 10 0 0 1 -10 -8 z" fill="url(#resin)"/>
+  <rect x="44" y="152" width="168" height="12" rx="6" fill="#5b6b8c"/>
+  <!-- the UV layer being cured -->
+  <rect x="112" y="152" width="32" height="6" rx="3" fill="#b18cff"/>
+  <path d="M112 160 l-10 50 h52 l-10 -50 z" fill="#b18cff" opacity=".35"/>
+</svg>

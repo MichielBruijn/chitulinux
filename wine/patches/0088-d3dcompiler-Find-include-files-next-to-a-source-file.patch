@@ -1,0 +1,36 @@
+From 49674678e7a6c75d68d23e0bc745cdd9140db8e1 Mon Sep 17 00:00:00 2001
+From: chitulinux <chitulinux@invalid>
+Date: Sun, 15 Nov 2026 17:13:54 +0100
+Subject: [PATCH] d3dcompiler: Find include files next to a source file given
+ with forward slashes.
+
+D3DCompile with D3D_COMPILE_STANDARD_FILE_INCLUDE took the folder of the
+source file only up to its last backslash. CHITUBOX passes
+C:/Program Files/CHITUBOX/resources/shader/.../VS.hlsl, so #include
+"Common.hlsl" was looked up in the current folder and failed, and
+CHITUBOX ended on the exception it throws for a shader that doesn't
+compile.
+---
+ dlls/d3dcompiler_43/compiler.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/dlls/d3dcompiler_43/compiler.c b/dlls/d3dcompiler_43/compiler.c
+index bbdc2c95551..8b67592eb0b 100644
+--- a/dlls/d3dcompiler_43/compiler.c
++++ b/dlls/d3dcompiler_43/compiler.c
+@@ -86,7 +86,11 @@ static HRESULT WINAPI d3dcompiler_include_from_file_open(ID3DInclude *iface, D3D
+     ULONG read;
+     DWORD len;
+ 
+-    if ((initial_dir = strrchr(include->initial_filename, '\\')))
++    initial_dir = strrchr(include->initial_filename, '\\');
++    /* applications also pass paths with forward slashes, as Windows accepts */
++    if (!initial_dir || (strrchr(include->initial_filename, '/') > initial_dir))
++        initial_dir = strrchr(include->initial_filename, '/');
++    if (initial_dir)
+     {
+         len = initial_dir - include->initial_filename + 1;
+         initial_dir = include->initial_filename;
+-- 
+2.53.0
+
