@@ -22,6 +22,9 @@ Under a plain Wine it either hangs at the start or closes when you make a new pr
 - CHITUBOX compiles its shaders with `#include "Common.hlsl"` and passes the shader's path with forward
   slashes. Wine's shader compiler then looked for the include in the wrong folder, and CHITUBOX quit on the
   error. Fixed in Wine (`wine/patches/0088-*`).
+- CHITUBOX draws its own title bar. Under Wine, maximizing went to the other screen or full screen,
+  restoring went back to the wrong screen, and a grey Windows frame showed around it. Fixed in Wine
+  (`wine/patches/0089-*` to `0091-*`).
 
 And as with [TopSo'Linux](https://github.com/MichielBruijn/topsolinux), whose patched Wine this uses:
 
@@ -34,7 +37,7 @@ And as with [TopSo'Linux](https://github.com/MichielBruijn/topsolinux), whose pa
 ## Tested
 
 Ubuntu 26.04 (GNOME, Wayland), laptop with Intel Arc + NVIDIA RTX and a 4K monitor, CHITUBOX v1.4.1:
-log in, open, slice and save.
+log in, open, slice and save; maximize and restore on either screen.
 
 ## What you need
 
@@ -52,16 +55,31 @@ log in, open, slice and save.
 3. ChituLinux finds the newest installer in `~/Downloads` (or asks for it), installs CHITUBOX in its own
    prefix and starts it. CHITUBOX is now in your app menu.
 
+Had CHITUBOX under a plain Wine (`~/.wine`)? ChituLinux offers to take over its settings, printers and
+login, so you don't log in again. That installation stays; its app menu entry is hidden.
+
 Keep the AppImage where it is, or start it once after moving it: the menu entry follows it.
 
 Everything is in `~/.local/share/chitulinux` (set `CHITULINUX_HOME` to use another folder); the log is
 `chitubox.log` there.
+
+## Updates
+
+- **ChituLinux**: once a day a start of CHITUBOX looks for a newer ChituLinux on GitHub and offers it.
+  *Update now* downloads it next to the AppImage you have (checked against `SHA256SUMS`), points the app
+  menu at it and removes the old one. Turn the check off in Settings.
+- **CHITUBOX**: CHITUBOX says when it has an update. Download its Windows installer to `~/Downloads`; the
+  next start offers to install it. Your settings and login stay.
+
+Right-click the app icon → *Check for updates* looks for both right away.
 
 ## Commands
 
 ```
 ChituLinux-<version>-x86_64.AppImage [FILE...]        start CHITUBOX, opening FILEs
 ChituLinux-<version>-x86_64.AppImage install [EXE]    install or update CHITUBOX with a (newer) installer
+ChituLinux-<version>-x86_64.AppImage update           look for a newer ChituLinux and CHITUBOX
+ChituLinux-<version>-x86_64.AppImage update-check on|off
 ChituLinux-<version>-x86_64.AppImage settings         scale, GPU, Wine's tools
 ChituLinux-<version>-x86_64.AppImage scale 150|auto   size of text and icons
 ChituLinux-<version>-x86_64.AppImage winecfg|regedit|shell

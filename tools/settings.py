@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ChituLinux settings: scale, graphics and Wine's tools.
+"""ChituLinux settings: scale, graphics, updates and Wine's tools.
 
 usage: settings.py   (needs CHITULINUX_HOME, WINEPREFIX and CHITULINUX_RUN; chitulinux-run sets them)
 
@@ -151,6 +151,19 @@ class Window(Gtk.Window):
             box.pack_start(grid, False, False, 0)
             box.pack_start(self.small('Try the other GPU when the 3D view flickers or goes black.'), False, False, 0)
 
+        # --- updates
+        heading = self.heading('Updates')
+        heading.set_margin_top(6)
+        box.pack_start(heading, False, False, 0)
+        self.check = Gtk.CheckButton(label='Look for a newer ChituLinux when CHITUBOX starts (once a day)')
+        self.check.set_active(read('update-check') != 'off')
+        self.check.connect('toggled', lambda c: self.save('update-check', None if c.get_active() else 'off'))
+        box.pack_start(self.check, False, False, 0)
+        if os.environ.get('CHITULINUX_UPDATE_CHECK') == '0':
+            box.pack_start(self.small('CHITULINUX_UPDATE_CHECK=0 is set and comes first.'), False, False, 0)
+        box.pack_start(self.small('A newer CHITUBOX: download its Windows installer to Downloads, ChituLinux then '
+                                  'offers it at the next start.'), False, False, 0)
+
         self.status = self.small('Changes are used from the next start of CHITUBOX.')
         box.pack_start(self.status, False, False, 10)
 
@@ -158,7 +171,9 @@ class Window(Gtk.Window):
         for label, command, tip in (
                 ('Wine configuration...', 'winecfg', 'Wine\'s own settings (winecfg). A scale set there '
                                                      'is replaced by the one set here.'),
-                ('Registry editor...', 'regedit', None)):
+                ('Registry editor...', 'regedit', None),
+                ('Check for updates...', 'update', 'A newer ChituLinux on GitHub, a newer CHITUBOX installer '
+                                                  'in Downloads')):
             b = Gtk.Button(label=label)
             if tip:
                 b.set_tooltip_text(tip)

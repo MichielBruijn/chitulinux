@@ -41,7 +41,7 @@ tar -xzf "$tarball" -C "$TOOLS/dxvk" --strip-components=1 \
 chmod +x "$BUILD/appimagetool.AppImage"
 
 # --- ChituLinux itself ------------------------------------------------------------------------------
-cp "$TOP/tools/settings.py" "$TOP/tools/exeicon.py" "$TOP/tools/desktop-dpi" "$TOOLS/"
+cp "$TOP/tools/settings.py" "$TOP/tools/exeicon.py" "$TOP/tools/chitulinux-release.py" "$TOP/tools/desktop-dpi" "$TOOLS/"
 cp "$TOP/VERSION" "$DIR/usr/share/chitulinux/VERSION"
 cp "$TOP/README.md" "$TOP/LICENSE" "$TOP/NOTICE.md" "$DIR/usr/share/doc/chitulinux/"
 cp "$TOP/chitulinux-run" "$DIR/AppRun"
@@ -73,3 +73,5 @@ need="$(find "$DIR/usr/bin" "$DIR/usr/lib/wine/"*-unix -type f -exec objdump -T 
 
 ARCH=x86_64 "$BUILD/appimagetool.AppImage" --comp zstd --runtime-file "$BUILD/runtime-x86_64" "$DIR" "$OUT"
 ls -la "$OUT"
+# for the release, and for the AppImage's own update check
+(cd "$TOP" && sha256sum "$(basename "$OUT")" > SHA256SUMS)

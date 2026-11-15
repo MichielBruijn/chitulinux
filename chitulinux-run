@@ -4,13 +4,16 @@
 # usage: ChituLinux-x86_64.AppImage [command | FILE...]
 #   (none) | FILE...   start CHITUBOX (installs it first when needed), opening FILEs
 #   install [EXE]      install or update CHITUBOX with its Windows installer (default: the newest in ~/Downloads)
+#   update             look for a newer ChituLinux (GitHub) and a newer CHITUBOX installer (~/Downloads)
+#   update-check on|off  whether a start looks for a newer ChituLinux (once a day; on)
 #   settings           scale, graphics, Wine's tools
 #   scale PERCENT|auto size of text and icons (100 = normal; auto follows the desktop)
 #   winecfg | regedit | shell
 #   stop               stop CHITUBOX and Wine
 #   integrate          (re)make the app menu entry
 #
-# environment: CHITULINUX_HOME (default ~/.local/share/chitulinux), CHITUBOX_SCALE=PERCENT, CHITUBOX_GPU=auto|intel|nvidia
+# environment: CHITULINUX_HOME (default ~/.local/share/chitulinux), CHITUBOX_SCALE=PERCENT, CHITUBOX_GPU=auto|intel|nvidia,
+#   CHITULINUX_UPDATE_CHECK=0, CHITULINUX_MIGRATE_FROM (default ~/.wine)
 
 set -u
 HERE="$(dirname "$(readlink -f "$0")")"
@@ -32,6 +35,8 @@ APPDIR='C:\Program Files\CHITUBOX'
 EXE="$WINEPREFIX/drive_c/Program Files/CHITUBOX/CHITUBOX.exe"
 ICON="$DATA/chitubox.png"
 DESKTOP="${XDG_DATA_HOME:-$HOME/.local/share}/applications/chitulinux-chitubox.desktop"
+RELEASES=https://github.com/MichielBruijn/chitulinux/releases
+CHITUBOX_DOWNLOAD=https://www.chitubox.com/en/download/chitubox-free
 mkdir -p "$DATA"
 
 msg() { echo "chitulinux: $*" >&2; }
@@ -81,11 +86,89 @@ fix_drives()
     for l in "$WINEPREFIX"/dosdevices/?::; do [ -L "${l%:}" ] || rm -f "$l"; done
 }
 
+# --- versions ------------------------------------------------------------------------------------------
+
+newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }  # A B: A is newer
+
+# CHITUBOX_WIN64_Installer_v1.4.1.exe (or …v1.4.1 (1).exe from a second download): 1.4.1
+installer_version()
+{
+    basename "$1" | sed -n 's/^.*[_ -][vV]\{0,1\}\([0-9][0-9.]*[0-9]\) \{0,1\}\(([0-9]*)\)\{0,1\}\.exe$/\1/p'
+}
+
 # the newest CHITUBOX installer in the usual places
 find_installer()
 {
-    ls -1 "$HOME/Downloads"/CHITUBOX*Installer*.exe "$HOME"/CHITUBOX*Installer*.exe \
-        "$(xdg-user-dir DOWNLOAD 2>/dev/null)"/CHITUBOX*Installer*.exe 2>/dev/null | sort -uV | tail -1
+    local f v best='' bv=''
+    for f in "$HOME/Downloads"/CHITUBOX*Installer*.exe "$(xdg-user-dir DOWNLOAD 2>/dev/null)"/CHITUBOX*Installer*.exe \
+            "$HOME"/CHITUBOX*Installer*.exe; do
+        [ -f "$f" ] || continue
+        v="$(installer_version "$f")"
+        if [ -z "$best" ] || newer "${v:-0}" "${bv:-0}"; then best="$f" bv="$v"; fi
+    done
+    [ -n "$best" ] && echo "$best"
+}
+
+# the installed CHITUBOX's version (its files don't say it): written when installing; for an installation
+# without it, that of the newest installer at hand, which it was installed with
+chitubox_version()
+{
+    [ -s "$DATA/chitubox-version" ] || [ ! -f "$EXE" ] ||
+        installer_version "$(find_installer)" > "$DATA/chitubox-version"
+    cat "$DATA/chitubox-version" 2>/dev/null
+}
+
+# a CHITUBOX in this prefix
+chitubox_running()
+{
+    local p
+    for p in $(pgrep -u "$(id -u)" -f 'CHITUBOX\.exe'); do
+        tr '\0' '\n' < "/proc/$p/environ" 2>/dev/null | grep -qxF "WINEPREFIX=$WINEPREFIX" && return 0
+    done
+    return 1
+}
+
+# --- an existing CHITUBOX in another prefix ------------------------------------------------------------
+
+# Its settings, printers and login (the login holds only on the same Windows machine ID, so that too).
+# Asked once, when CHITUBOX is installed here for the first time
+OLD_PREFIX="${CHITULINUX_MIGRATE_FROM:-$HOME/.wine}"
+migrate_settings()
+{
+    local old="$OLD_PREFIX/drive_c/users/$USER/AppData" new="$WINEPREFIX/drive_c/users/$USER/AppData" d guid
+    [ -d "$old/Local/Chitubox_2025" ] && [ ! -e "$new/Local/Chitubox_2025" ] || return 0
+    tell question "<b>CHITUBOX is also installed in ${OLD_PREFIX/#$HOME/\~}.</b>\n\nTake over its settings, printers and login? That installation stays, only its app menu entry is hidden (it doesn't start with ChituLinux' Wine)." ||
+        return 0
+    msg "taking over CHITUBOX's settings from $OLD_PREFIX"
+    mkdir -p "$new/Local/Chitubox_2025" "$new/Roaming"
+    # not the caches, CHITUBOX makes them again
+    for d in "$old/Local/Chitubox_2025"/*; do
+        case "${d##*/}" in cache|qt_runtime_cache) ;; *) cp -a "$d" "$new/Local/Chitubox_2025/" ;; esac
+    done
+    [ -d "$old/Local/ChituManager" ] && cp -a "$old/Local/ChituManager" "$new/Local/"
+    [ -d "$old/Roaming/Chitubox_2025" ] && cp -a "$old/Roaming/Chitubox_2025" "$new/Roaming/"
+    guid="$(sed -n '/^\[Software\\\\Microsoft\\\\Cryptography\]/,/^$/s/^"MachineGuid"="\([^"]*\)".*/\1/p' \
+        "$OLD_PREFIX/system.reg" 2>/dev/null)"
+    [ -n "$guid" ] &&
+        "$WINE" reg add 'HKLM\Software\Microsoft\Cryptography' /v MachineGuid /d "$guid" /f /reg:64 >/dev/null 2>&1
+    # CHITUBOX would report the old installation's crashes again (Software Bug Feedback), without their dumps
+    python3 -I - "$new/Local/Chitubox_2025/default_account"/*/kvcofnig.dat <<'EOF' >> "$LOG" 2>&1
+import os, shutil, sqlite3, sys
+for db in sys.argv[1:]:
+    if not os.path.isfile(db):
+        continue
+    shutil.copy2(db, db + '.bak-chitulinux')
+    try:
+        with sqlite3.connect(db) as c:
+            n = c.execute("DELETE FROM t_kvconfig WHERE CAST(F_VALUE AS TEXT) LIKE '%.dmp%'").rowcount
+        print(f'{db}: {n} old crash reports removed')
+    except sqlite3.Error as e:
+        print(f'{db}: {e}')
+EOF
+    for d in "${XDG_DATA_HOME:-$HOME/.local/share}"/applications/wine/Programs/CHITUBOX*.desktop; do
+        [ -f "$d" ] && mv -f "$d" "$d.bak-chitulinux"
+    done
+    return 0
 }
 
 install_chitubox()  # [INSTALLER]
@@ -94,34 +177,52 @@ install_chitubox()  # [INSTALLER]
     [ -n "$exe" ] || exe="$(find_installer)"
     if [ -z "$exe" ] && gui; then
         tell info "ChituLinux needs CHITUBOX's Windows installer (CHITUBOX_WIN64_Installer_….exe).\n\nDownload it from chitubox.com (Windows, 64-bit) and choose it in the next window." || exit 1
-        xdg-open https://www.chitubox.com/en/download/chitubox-free >/dev/null 2>&1 &
+        xdg-open "$CHITUBOX_DOWNLOAD" >/dev/null 2>&1 &
         exe="$(zenity --file-selection --title='CHITUBOX installer' --filename="$HOME/Downloads/" \
             --file-filter='CHITUBOX installer | *.exe' 2>/dev/null)"
     fi
     [ -f "$exe" ] || { tell error "No CHITUBOX installer found."; exit 1; }
+    if chitubox_running; then
+        tell question "CHITUBOX is running. Save your work there first.\n\nClose CHITUBOX and install $(basename "$exe")?" ||
+            exit 0
+    fi
     make_prefix
     fix_drives
+    [ -f "$EXE" ] || migrate_settings
     msg "installing $(basename "$exe")"
     stop_wine
-    local root='C:\Program Files\CHITUBOX' rc
-    # Qt's installer: an update goes through its maintenance tool, a first installation installs
+    local root='C:\Program Files\CHITUBOX' rc prog="${EXE%/*}" old="$DATA/.previous"
+    rm -f "$DATA/.install-rc"
     (
-        if [ -f "$EXE" ]; then
-            "$WINE" "$exe" install --root "$root" --accept-licenses --accept-messages --confirm-command \
-                >> "$LOG" 2>&1 || {
-                # Qt's installer refuses a folder with an installation: remove it with its own uninstaller
-                "$WINE" "$WINEPREFIX/drive_c/Program Files/CHITUBOX/Uninstall.exe" purge --confirm-command >> "$LOG" 2>&1
-                "$WINE" "$exe" install --root "$root" --accept-licenses --accept-messages --confirm-command >> "$LOG" 2>&1
-            }
-        else
-            "$WINE" "$exe" install --root "$root" --accept-licenses --accept-messages --confirm-command >> "$LOG" 2>&1
+        # An update: CHITUBOX's installer would start the old one's uninstaller and wait for its wizard. So
+        # remove it first, with its own uninstaller (that leaves the settings in AppData), and keep its files
+        # (hard links) to put back when the new one fails
+        if [ -f "$prog/Uninstall.exe" ]; then
+            rm -rf "$old"
+            cp -al "$prog" "$old" 2>>"$LOG" || rm -rf "$old"
+            "$WINE" "$prog/Uninstall.exe" purge --confirm-command >> "$LOG" 2>&1
+            "$WINESERVER" -w
+            [ ! -f "$prog/Uninstall.exe" ] || { echo uninstall > "$DATA/.install-rc"; exit; }
         fi
+        "$WINE" "$exe" install --root "$root" --accept-licenses --accept-messages --confirm-command >> "$LOG" 2>&1
         echo $? > "$DATA/.install-rc"
     ) | if gui; then zenity --progress --pulsate --auto-close --no-cancel --title=ChituLinux \
             --text="Installing $(basename "$exe")…" 2>/dev/null; else cat; fi
     rc="$(cat "$DATA/.install-rc" 2>/dev/null)"; rm -f "$DATA/.install-rc"
     "$WINESERVER" -w
-    [ "$rc" = 0 ] && [ -f "$EXE" ] || { tell error "Installing CHITUBOX failed, see $LOG."; exit 1; }
+    if [ "$rc" != 0 ] || [ ! -f "$EXE" ]; then
+        msg "installing failed ($rc)"
+        if [ -d "$old" ]; then
+            rm -rf "$prog" && mv "$old" "$prog"
+            tell error "Installing $(basename "$exe") failed, the CHITUBOX you had stays. See $LOG."
+        else
+            tell error "Installing CHITUBOX failed, see $LOG."
+        fi
+        exit 1
+    fi
+    rm -rf "$old"
+    installer_version "$exe" > "$DATA/chitubox-version"
+    rm -f "$DATA/.chitubox-skip"
     integrate
     msg "CHITUBOX installed"
 }
@@ -160,7 +261,8 @@ stop_wine() { "$WINESERVER" -k 2>/dev/null; "$WINESERVER" -w 2>/dev/null; }
 integrate()
 {
     [ -f "$EXE" ] || return 0
-    python3 "$TOOLS/exeicon.py" "$EXE" "$ICON" >> "$LOG" 2>&1 || cp "$HERE/chitulinux.png" "$ICON"
+    [ "$ICON" -nt "$EXE" ] ||
+        python3 "$TOOLS/exeicon.py" "$EXE" "$ICON" >> "$LOG" 2>&1 || cp "$HERE/chitulinux.png" "$ICON"
     mkdir -p "$(dirname "$DESKTOP")"
     local q
     q="$(printf '%q' "$SELF")"
@@ -176,11 +278,15 @@ Categories=Graphics;3DGraphics;Engineering;
 MimeType=application/x-chitubox;model/stl;model/obj;model/3mf;
 StartupWMClass=chitubox.exe
 StartupNotify=true
-Actions=settings;winecfg;stop;
+Actions=settings;update;winecfg;stop;
 
 [Desktop Action settings]
 Name=Settings (scaling, graphics, Wine)
 Exec=$q settings
+
+[Desktop Action update]
+Name=Check for updates
+Exec=$q update
 
 [Desktop Action winecfg]
 Name=Wine configuration
@@ -190,7 +296,12 @@ Exec=$q winecfg
 Name=Stop CHITUBOX
 Exec=$q stop
 EOF
-    cmp -s "$DESKTOP.tmp" "$DESKTOP" && rm -f "$DESKTOP.tmp" || mv -f "$DESKTOP.tmp" "$DESKTOP"
+    if cmp -s "$DESKTOP.tmp" "$DESKTOP"; then
+        rm -f "$DESKTOP.tmp"
+    else
+        mv -f "$DESKTOP.tmp" "$DESKTOP"
+        update-desktop-database "$(dirname "$DESKTOP")" >/dev/null 2>&1
+    fi
     # CHITUBOX projects open with CHITUBOX; STL and others only offer it
     local mime="${XDG_DATA_HOME:-$HOME/.local/share}/mime"
     if [ ! -f "$mime/packages/chitulinux.xml" ]; then
@@ -207,18 +318,146 @@ EOF
         update-mime-database "$mime" >/dev/null 2>&1
         xdg-mime default chitulinux-chitubox.desktop application/x-chitubox 2>/dev/null
     fi
-    update-desktop-database "$(dirname "$DESKTOP")" >/dev/null 2>&1
+    return 0
+}
+
+# --- updates -------------------------------------------------------------------------------------------
+
+# the newest ChituLinux on GitHub: sets LATEST, LATEST_URL and LATEST_SUMS; fails when it can't be found
+find_latest()  # [TIMEOUT]
+{
+    local info
+    info="$(timeout "${1:-60}" python3 -I "$TOOLS/chitulinux-release.py" latest 2>>"$LOG")" || return 1
+    { read -r LATEST; read -r LATEST_URL; read -r LATEST_SUMS; } <<< "$info"
+    [ -n "$LATEST" ]
+}
+
+# LATEST, checked against its SHA256SUMS, next to this AppImage and in the app menu instead of it.
+# A running CHITUBOX keeps this version until it closes
+update_chitulinux()
+{
+    local release="$TOOLS/chitulinux-release.py" dir new
+    [ -f "${APPIMAGE:-}" ] || { tell error "Only the ChituLinux AppImage can update itself."; return 1; }
+    dir="$(dirname "$APPIMAGE")"
+    [ -w "$dir" ] || dir="$HOME/Applications"
+    mkdir -p "$dir"
+    new="$dir/${LATEST_URL##*/}"
+    msg "downloading $LATEST_URL"
+    python3 -I "$release" download "$LATEST_SUMS" "$new.sha256" 2>>"$LOG" >/dev/null &&
+        python3 -I "$release" download "$LATEST_URL" "$new" 2>>"$LOG" |
+        if gui; then zenity --progress --auto-close --width=460 --title=ChituLinux \
+            --text="Downloading ChituLinux $LATEST…" 2>/dev/null; else cat >/dev/null; fi
+    if [ "${PIPESTATUS[0]}" != 0 ] || [ ! -f "$new" ]; then
+        rm -f "$new.part" "$new.sha256"
+        tell error "Downloading ChituLinux $LATEST failed or was cancelled."
+        return 1
+    fi
+    if ! (cd "$dir" && grep -F " ${new##*/}" "$new.sha256" | sha256sum -c --status); then
+        rm -f "$new" "$new.sha256"
+        tell error "The downloaded ChituLinux doesn't match its checksum, nothing was changed."
+        return 1
+    fi
+    rm -f "$new.sha256"
+    chmod +x "$new"
+    env -u APPIMAGE -u APPDIR -u ARGV0 -u OWD "$new" integrate ||
+        { tell error "ChituLinux $LATEST doesn't start, this version stays."; return 1; }
+    [ "$new" = "$APPIMAGE" ] || rm -f "$APPIMAGE"
+    rm -f "$DATA/.update-skip"
+    msg "updated to $new"
+    tell info "ChituLinux is updated to $LATEST, from the next start of CHITUBOX." || true
+}
+
+update_question()
+{
+    zenity --question --width=480 --title=ChituLinux --icon="$ICON" \
+        --ok-label="Update now" --cancel-label="Later" --extra-button="Skip this version" \
+        --text="<big><b>ChituLinux $LATEST is available</b></big>\n\nThis is $VERSION. <b>Update now</b> downloads it and replaces this AppImage with it. CHITUBOX, its settings and your projects stay.\n\n<a href=\"$RELEASES/tag/v$LATEST\">What's new</a>\n\n<small>${1:-}</small>" 2>/dev/null
+}
+
+# At most once a day, in the background while CHITUBOX starts: offer a newer ChituLinux. Off with
+# CHITULINUX_UPDATE_CHECK=0 or update-check off; no network means no question
+start_update_check()
+{
+    local stamp="$DATA/.update-check"
+    [ "${CHITULINUX_UPDATE_CHECK:-1}" != 0 ] && [ "$(cat "$DATA/update-check" 2>/dev/null)" != off ] &&
+        gui && [ -f "${APPIMAGE:-}" ] && [ -n "$VERSION" ] || return 0
+    [ -n "$(find "$stamp" -mmin -1440 2>/dev/null)" ] && return 0
+    (
+        sleep 20  # after CHITUBOX's splash
+        find_latest 15 || exit 0
+        touch "$stamp"
+        newer "$LATEST" "$VERSION" && [ "$(cat "$DATA/.update-skip" 2>/dev/null)" != "$LATEST" ] || exit 0
+        msg "ChituLinux $LATEST is available"
+        answer="$(update_question "Turn this check off in Settings.")" && update_chitulinux
+        [ "$answer" = "Skip this version" ] && echo "$LATEST" > "$DATA/.update-skip" && msg "skipping $LATEST"
+    ) < /dev/null &
+}
+
+# Before CHITUBOX starts: a newer CHITUBOX installer in Downloads. CHITUBOX says when it has an update; its
+# installer, downloaded, lands there
+offer_chitubox_update()
+{
+    local inst v cur answer
+    gui && [ -f "$EXE" ] && ! chitubox_running || return 0
+    inst="$(find_installer)"
+    v="$(installer_version "$inst")" cur="$(chitubox_version)"
+    [ -n "$v" ] && [ -n "$cur" ] && newer "$v" "$cur" && [ "$(cat "$DATA/.chitubox-skip" 2>/dev/null)" != "$v" ] ||
+        return 0
+    msg "CHITUBOX $v is in $inst"
+    answer="$(zenity --question --width=480 --title=ChituLinux --icon="$ICON" \
+        --ok-label="Install now" --cancel-label="Later" --extra-button="Skip this version" \
+        --text="<big><b>CHITUBOX $v</b></big>\n\n<tt>${inst/#$HOME/\~}</tt> is newer than CHITUBOX $cur here. Install it now? Your settings, printers and login stay." 2>/dev/null)" &&
+        install_chitubox "$inst"
+    [ "$answer" = "Skip this version" ] && echo "$v" > "$DATA/.chitubox-skip" && msg "skipping CHITUBOX $v"
+    return 0
+}
+
+# the app menu's Check for updates: ChituLinux, then CHITUBOX
+check_updates()
+{
+    local text='' inst v cur answer exe
+    if [ -z "${APPIMAGE:-}" ]; then
+        :
+    elif ! find_latest 30; then
+        text="GitHub could not be reached to look for a newer ChituLinux."
+    elif newer "$LATEST" "$VERSION"; then
+        if gui; then
+            answer="$(update_question)" && update_chitulinux
+            [ "$answer" = "Skip this version" ] && echo "$LATEST" > "$DATA/.update-skip"
+        else
+            update_chitulinux
+        fi
+    else
+        text="ChituLinux $VERSION is the newest version."
+    fi
+    [ -f "$EXE" ] || { [ -z "$text" ] || tell info "$text"; return 0; }
+    inst="$(find_installer)"
+    v="$(installer_version "$inst")" cur="$(chitubox_version)"
+    if [ -n "$v" ] && newer "$v" "${cur:-0}"; then
+        tell question "${text:+$text\n\n}<b>CHITUBOX $v</b> is in <tt>${inst/#$HOME/\~}</tt>, CHITUBOX ${cur:-?} is installed. Install it now? Your settings, printers and login stay." &&
+            install_chitubox "$inst"
+        return 0
+    fi
+    text="${text:+$text\n\n}CHITUBOX ${cur:-?} is installed, there is no newer CHITUBOX installer in Downloads. CHITUBOX says when it has an update: download the Windows installer (64-bit) to Downloads and start CHITUBOX, or choose it here."
+    gui || { msg "$text"; return 0; }
+    answer="$(zenity --question --width=480 --title=ChituLinux --icon="$ICON" --text="$text" \
+        --ok-label="Choose installer…" --cancel-label="Close" --extra-button="Download page" 2>/dev/null)" && {
+        exe="$(zenity --file-selection --title='CHITUBOX installer' --filename="$HOME/Downloads/" \
+            --file-filter='CHITUBOX installer | *.exe' 2>/dev/null)" && install_chitubox "$exe"
+    }
+    [ "$answer" = "Download page" ] && xdg-open "$CHITUBOX_DOWNLOAD" >/dev/null 2>&1 &
     return 0
 }
 
 start_chitubox()  # FILE...
 {
     [ -f "$EXE" ] || install_chitubox
+    offer_chitubox_update
     fix_drives
     apply_scale
     setup_gpu
-    # the desktop entry points at this AppImage, also after it moved or was renamed
-    grep -qsF "Exec=$(printf '%q' "$SELF") %F" "$DESKTOP" || integrate
+    # the menu entry: points at this AppImage, also after it moved or was renamed, and has this version's actions
+    integrate
     # Qt WebEngine shares its frames with Qt Quick as Direct3D 11 shared textures; DXVK only has those in
     # Proton. Its pages (login, news) draw fine without the GPU
     export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---disable-gpu}"
@@ -228,13 +467,22 @@ start_chitubox()  # FILE...
         [ -e "$f" ] && f="$("$WINE" winepath -w "$(readlink -f "$f")" 2>/dev/null)"
         args+=("$f")
     done
-    msg "ChituLinux $VERSION, $(date '+%F %T')"
+    msg "ChituLinux $VERSION, CHITUBOX $(chitubox_version), $(date '+%F %T')"
+    start_update_check
     cd "$WINEPREFIX/drive_c/Program Files/CHITUBOX" || exit 1
     exec "$WINE" "$EXE" "${args[@]}"
 }
 
 case "${1:-}" in
     install)   shift; install_chitubox "${1:-}" ;;
+    update)    check_updates ;;
+    update-check)
+               case "${2:-}" in
+                   off) echo off > "$DATA/update-check"; msg "no more looking for a newer ChituLinux at start" ;;
+                   on)  rm -f "$DATA/update-check" "$DATA/.update-check" "$DATA/.update-skip"
+                        msg "a start looks for a newer ChituLinux once a day" ;;
+                   *)   msg "usage: update-check on|off"; exit 1 ;;
+               esac ;;
     settings)  export CHITULINUX_RUN="$SELF" CHITULINUX_HOME="$DATA"
                python3 "$TOOLS/settings.py" 2>>"$LOG" || [ $? != 2 ] || exec "$0" winecfg ;;
     scale)     case "${2:-}" in
