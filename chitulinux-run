@@ -8,6 +8,7 @@
 #   update-check on|off  whether a start looks for a newer ChituLinux (once a day; on)
 #   settings           scale, graphics, Wine's tools
 #   scale PERCENT|auto size of text and icons (100 = normal; auto follows the desktop)
+#   rpp URL|off        send to Resin Print Portal: a printer "RPP (...)" in CHITUBOX (e.g. http://host:5001)
 #   winecfg | regedit | shell
 #   stop               stop CHITUBOX and Wine
 #   integrate          (re)make the app menu entry
@@ -449,6 +450,17 @@ check_updates()
     return 0
 }
 
+# Resin Print Portal (github.com/MichielBruijn/Resin-Print-Portal) as a network printer in CHITUBOX, while it
+# runs. It answers CHITUBOX on this computer, so RPP may be in another network
+start_rpp_bridge()
+{
+    local url
+    url="$(cat "$DATA/rpp-url" 2>/dev/null)"
+    [ -n "$url" ] || return 0
+    python3 -I "$TOOLS/rpp-bridge.py" --rpp "$url" --spool "$DATA/rpp" --log "$DATA/rpp-bridge.log" --watch $$ \
+        < /dev/null > /dev/null 2>&1 &
+}
+
 start_chitubox()  # FILE...
 {
     [ -f "$EXE" ] || install_chitubox
@@ -469,6 +481,7 @@ start_chitubox()  # FILE...
     done
     msg "ChituLinux $VERSION, CHITUBOX $(chitubox_version), $(date '+%F %T')"
     start_update_check
+    start_rpp_bridge
     cd "$WINEPREFIX/drive_c/Program Files/CHITUBOX" || exit 1
     exec "$WINE" "$EXE" "${args[@]}"
 }
@@ -485,6 +498,12 @@ case "${1:-}" in
                esac ;;
     settings)  export CHITULINUX_RUN="$SELF" CHITULINUX_HOME="$DATA"
                python3 "$TOOLS/settings.py" 2>>"$LOG" || [ $? != 2 ] || exec "$0" winecfg ;;
+    rpp)       case "${2:-}" in
+                   ''|-h|--help) msg "usage: rpp URL|off"; exit 1 ;;
+                   off) rm -f "$DATA/rpp-url"; msg "no RPP printer in CHITUBOX from the next start" ;;
+                   http://*|https://*) echo "$2" > "$DATA/rpp-url"; msg "RPP at $2 from the next start of CHITUBOX" ;;
+                   *) echo "http://$2" > "$DATA/rpp-url"; msg "RPP at http://$2 from the next start of CHITUBOX" ;;
+               esac ;;
     scale)     case "${2:-}" in
                    auto) rm -f "$DATA/scale"; msg "scale follows the desktop" ;;
                    ''|*[!0-9]*) msg "usage: scale PERCENT|auto"; exit 1 ;;

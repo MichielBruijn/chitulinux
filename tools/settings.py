@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ChituLinux settings: scale, graphics, updates and Wine's tools.
+"""ChituLinux settings: scale, graphics, Resin Print Portal, updates and Wine's tools.
 
 usage: settings.py   (needs CHITULINUX_HOME, WINEPREFIX and CHITULINUX_RUN; chitulinux-run sets them)
 
@@ -151,6 +151,21 @@ class Window(Gtk.Window):
             box.pack_start(grid, False, False, 0)
             box.pack_start(self.small('Try the other GPU when the 3D view flickers or goes black.'), False, False, 0)
 
+        # --- Resin Print Portal
+        heading = self.heading('Resin Print Portal')
+        heading.set_margin_top(6)
+        box.pack_start(heading, False, False, 0)
+        row = Gtk.Box(spacing=8)
+        row.pack_start(Gtk.Label(label='Address', xalign=0), False, False, 0)
+        self.rpp = Gtk.Entry(placeholder_text='http://host:5001', width_chars=32)
+        self.rpp.set_text(read('rpp-url'))
+        self.rpp.connect('changed', self.on_rpp)
+        row.pack_start(self.rpp, True, True, 0)
+        box.pack_start(row, False, False, 0)
+        box.pack_start(self.small('CHITUBOX then has a network printer <i>RPP (your printer)</i>: what you send '
+                                  'to it goes to RPP, <i>Start printing</i> prints it there. Empty: none.'),
+                       False, False, 0)
+
         # --- updates
         heading = self.heading('Updates')
         heading.set_margin_top(6)
@@ -209,6 +224,12 @@ class Window(Gtk.Window):
         self.status.set_markup('<small>Saved. %s</small>' % (
             'Close CHITUBOX and start it again to use it.' if wine_running()
             else 'Used from the next start of CHITUBOX.'))
+
+    def on_rpp(self, entry):
+        url = entry.get_text().strip()
+        if url and '://' not in url:
+            url = 'http://' + url
+        self.save('rpp-url', url or None)
 
     def on_scale(self, *args):
         self.percent.set_sensitive(self.fixed.get_active())

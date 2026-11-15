@@ -63,6 +63,17 @@ Keep the AppImage where it is, or start it once after moving it: the menu entry 
 Everything is in `~/.local/share/chitulinux` (set `CHITULINUX_HOME` to use another folder); the log is
 `chitubox.log` there.
 
+## Sending to Resin Print Portal
+
+[Resin Print Portal](https://github.com/MichielBruijn/Resin-Print-Portal) (RPP) runs ELEGOO's SDCP printers
+(Mars 4 Ultra, Saturn 3 Ultra, ...) from a web page. Enter RPP's address in Settings (or
+`ChituLinux-….AppImage rpp http://host:5001`), and while CHITUBOX runs it has a network printer
+*RPP (your printer)*: *Send* uploads the sliced file to RPP, *Start printing* prints it from there.
+
+ChituLinux answers CHITUBOX as that printer on this computer (`tools/rpp-bridge.py`), so RPP may be on
+another network than the printer search reaches. It asks the printer once for its model and resolution,
+CHITUBOX lists only printers of the machine chosen in it.
+
 ## Updates
 
 - **ChituLinux**: once a day a start of CHITUBOX looks for a newer ChituLinux on GitHub and offers it.
@@ -82,6 +93,7 @@ ChituLinux-<version>-x86_64.AppImage update           look for a newer ChituLinu
 ChituLinux-<version>-x86_64.AppImage update-check on|off
 ChituLinux-<version>-x86_64.AppImage settings         scale, GPU, Wine's tools
 ChituLinux-<version>-x86_64.AppImage scale 150|auto   size of text and icons
+ChituLinux-<version>-x86_64.AppImage rpp URL|off      send to Resin Print Portal
 ChituLinux-<version>-x86_64.AppImage winecfg|regedit|shell
 ChituLinux-<version>-x86_64.AppImage stop             stop CHITUBOX and Wine
 ```
