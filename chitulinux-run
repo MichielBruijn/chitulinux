@@ -473,6 +473,8 @@ start_chitubox()  # FILE...
     # Qt WebEngine shares its frames with Qt Quick as Direct3D 11 shared textures; DXVK only has those in
     # Proton. Its pages (login, news) draw fine without the GPU
     export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS:---disable-gpu}"
+    # the sandboxed renderer hangs on its own desktop under Wine (get_desktop_window fails): Messages stays empty
+    export QTWEBENGINE_DISABLE_SANDBOX="${QTWEBENGINE_DISABLE_SANDBOX:-1}"
     export DXVK_LOG_LEVEL="${DXVK_LOG_LEVEL:-warn}" DXVK_LOG_PATH="${DXVK_LOG_PATH:-none}"
     local args=() f
     for f in "$@"; do
