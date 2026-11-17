@@ -85,6 +85,12 @@ fix_drives()
         case "$(readlink "$l")" in /media/*|/run/media/*) rm -f "$l" ;; esac
     done
     for l in "$WINEPREFIX"/dosdevices/?::; do [ -L "${l%:}" ] || rm -f "$l"; done
+    # Windows' desktop stays in the prefix: installers put .lnk shortcuts there, useless on the Linux desktop.
+    # A file in it, else wineboot turns the empty folder back into a link
+    for l in "$WINEPREFIX"/drive_c/users/*/Desktop; do
+        [ -L "$l" ] || continue
+        rm -f "$l" && mkdir -p "$l" && touch "$l/desktop.ini"
+    done
 }
 
 # --- versions ------------------------------------------------------------------------------------------
