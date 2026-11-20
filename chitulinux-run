@@ -37,7 +37,7 @@ EXE="$WINEPREFIX/drive_c/Program Files/CHITUBOX/CHITUBOX.exe"
 ICON="$DATA/chitubox.png"
 DESKTOP="${XDG_DATA_HOME:-$HOME/.local/share}/applications/chitulinux-chitubox.desktop"
 RELEASES=https://github.com/MichielBruijn/chitulinux/releases
-CHITUBOX_DOWNLOAD=https://www.chitubox.com/en/download/chitubox-free
+CHITUBOX_DOWNLOAD=https://www.chitubox.com/download.html
 mkdir -p "$DATA"
 
 msg() { echo "chitulinux: $*" >&2; }

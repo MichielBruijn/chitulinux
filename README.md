@@ -45,7 +45,7 @@ log in, open, slice and save; maximize and restore on either screen.
 - A GPU with a Vulkan driver (Intel, AMD or NVIDIA)
 - `zenity` for the dialogs, `python3` with GTK 3 for the settings (both on most desktops)
 - CHITUBOX's Windows installer, `CHITUBOX_WIN64_Installer_v….exe`, from
-  [chitubox.com](https://www.chitubox.com/en/download/chitubox-free)
+  [chitubox.com](https://www.chitubox.com/download.html)
 
 ## Installing
 
