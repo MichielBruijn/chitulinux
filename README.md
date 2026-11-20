@@ -79,8 +79,10 @@ CHITUBOX lists only printers of the machine chosen in it.
 - **ChituLinux**: once a day a start of CHITUBOX looks for a newer ChituLinux on GitHub and offers it.
   *Update now* downloads it next to the AppImage you have (checked against `SHA256SUMS`), points the app
   menu at it and removes the old one. Turn the check off in Settings.
-- **CHITUBOX**: CHITUBOX says when it has an update. Download its Windows installer to `~/Downloads`; the
-  next start offers to install it. Your settings and login stay.
+- **CHITUBOX**: CHITUBOX says when it has an update. Its *Update* works: ChituLinux stops the installer
+  CHITUBOX downloaded and starts (under Wine it would remove part of CHITUBOX and stop), installs it its own
+  way and starts CHITUBOX again. Or download its Windows installer to `~/Downloads`; the next start offers
+  to install it. Your settings and login stay either way.
 
 Right-click the app icon → *Check for updates* looks for both right away.
 

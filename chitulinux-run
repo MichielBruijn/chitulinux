@@ -209,7 +209,7 @@ install_chitubox()  # [INSTALLER]
     [ -f "$exe" ] || { tell error "No CHITUBOX installer found."; exit 1; }
     if chitubox_running; then
         tell question "CHITUBOX is running. Save your work there first.\n\nClose CHITUBOX and install $(basename "$exe")?" ||
-            exit 0
+            exit 2  # not now
     fi
     local name; name="$(basename "$exe")"
     busy "Installing $name…"
@@ -426,8 +426,8 @@ start_update_check()
     ) < /dev/null &
 }
 
-# Before CHITUBOX starts: a newer CHITUBOX installer in Downloads. CHITUBOX says when it has an update; its
-# installer, downloaded, lands there
+# Before CHITUBOX starts: a newer CHITUBOX installer in Downloads, downloaded by hand from chitubox.com (its own
+# update goes through watch_chitubox_update)
 offer_chitubox_update()
 {
     local inst v cur answer
@@ -493,6 +493,40 @@ start_rpp_bridge()
         < /dev/null > /dev/null 2>&1 &
 }
 
+# CHITUBOX's own update (its update notice, Help → Check for Update) downloads the installer and starts it
+# with --upp. Under Wine that one removes part of CHITUBOX (platforms\, without which it doesn't start) and
+# dies. So it's stopped right away and installed the ChituLinux way, after which CHITUBOX starts again
+watch_chitubox_update()  # PID
+{
+    (
+        local p exe cwd ver copy until=0
+        while kill -0 "$1" 2>/dev/null || [ "$until" = 0 ] || [ "$SECONDS" -lt "$until" ]; do
+            # keep looking for a minute after CHITUBOX quit: it starts the installer and quits
+            kill -0 "$1" 2>/dev/null || [ "$until" != 0 ] || until=$((SECONDS + 60))
+            sleep 0.5
+            for p in $(pgrep -u "$(id -u)" -f -- ' --upp( |$)'); do
+                tr '\0' '\n' < "/proc/$p/environ" 2>/dev/null | grep -qxF "WINEPREFIX=$WINEPREFIX" || continue
+                exe="$(tr '\0' '\n' < "/proc/$p/cmdline" 2>/dev/null | head -1)" cwd="$(readlink "/proc/$p/cwd")"
+                kill "$p"
+                case "$exe" in
+                    ?:*|\\*) exe="$("$WINE" winepath -u "$exe" 2>/dev/null)" ;;
+                    *) exe="$cwd/${exe//\\//}" ;;
+                esac
+                [ -f "$exe" ] || { msg "CHITUBOX's update installer stopped, not found: $exe"; exit; }
+                ver="$(python3 -I "$TOOLS/chitulinux-release.py" chitubox "$(chitubox_version)" "$exe" 2>>"$LOG")"
+                msg "CHITUBOX's update to ${ver:-?} ($exe): installing it the ChituLinux way"
+                copy="$DATA/CHITUBOX_WIN64_Installer${ver:+_v$ver}.exe"
+                cp -f "$exe" "$copy" || exit
+                # CHITUBOX quits by itself; else the install asks to close it
+                for _ in $(seq 60); do chitubox_running || break; sleep 0.5; done
+                "$SELF" install "$copy" && rm -f "$copy" && exec "$SELF"
+                rm -f "$copy"
+                exit
+            done
+        done
+    ) < /dev/null >> "$LOG" 2>&1 &
+}
+
 start_chitubox()  # FILE...
 {
     [ -f "$EXE" ] || install_chitubox
@@ -517,6 +551,7 @@ start_chitubox()  # FILE...
     msg "ChituLinux $VERSION, CHITUBOX $(chitubox_version), $(date '+%F %T')"
     start_update_check
     start_rpp_bridge
+    watch_chitubox_update $$
     cd "$WINEPREFIX/drive_c/Program Files/CHITUBOX" || exit 1
     # the dialog until CHITUBOX's first window (its splash) is there; exec keeps this PID for Wine
     if [ -n "$BUSY" ]; then
