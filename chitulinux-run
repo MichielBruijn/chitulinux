@@ -43,8 +43,25 @@ mkdir -p "$DATA"
 msg() { echo "chitulinux: $*" >&2; }
 gui() { [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v zenity >/dev/null; }
 
+# "busy" dialog (pulsating bar) while there's nothing else to see; busy again only changes its text. zenity
+# doesn't close a pulsating one by itself (nor at EOF, which Wine's processes would hold off anyway): killed
+BUSY= BUSY_PID=
+busy()  # TEXT
+{
+    msg "$1"
+    gui || return 0
+    if [ -z "$BUSY" ]; then
+        exec {BUSY}> >(exec zenity --progress --pulsate --no-cancel --width=460 --title=ChituLinux 2>/dev/null)
+        BUSY_PID=$!
+    fi
+    echo "# $1" >&"$BUSY" 2>/dev/null
+}
+busy_end() { [ -z "$BUSY" ] || { kill "$BUSY_PID"; exec {BUSY}>&-; BUSY= BUSY_PID=; } 2>/dev/null; }
+trap busy_end EXIT
+
 tell()  # info|error|question TEXT
 {
+    busy_end
     msg "$(printf '%b' "$2" | sed 's/<[^>]*>//g' | tr -s '\n' ' ')"
     if gui; then
         zenity --"$1" --width=460 --title=ChituLinux --text="$2" 2>/dev/null
@@ -59,6 +76,7 @@ make_prefix()
 {
     [ -f "$WINEPREFIX/.chitulinux" ] && return
     msg "making the Wine prefix in $WINEPREFIX"
+    busy "Preparing Wine for CHITUBOX (the first time only, about a minute)…"
     # CHITUBOX uses neither .NET (Mono) nor Internet Explorer (Gecko): no download dialogs for them
     WINEDLLOVERRIDES="$WINEDLLOVERRIDES;mscoree,mshtml=" "$WINE" wineboot -i >> "$LOG" 2>&1 ||
         { tell error "Wine could not make its prefix, see $LOG."; exit 1; }
@@ -193,30 +211,38 @@ install_chitubox()  # [INSTALLER]
         tell question "CHITUBOX is running. Save your work there first.\n\nClose CHITUBOX and install $(basename "$exe")?" ||
             exit 0
     fi
+    local name; name="$(basename "$exe")"
+    busy "Installing $name…"
     make_prefix
     fix_drives
     [ -f "$EXE" ] || migrate_settings
-    msg "installing $(basename "$exe")"
+    # Wine only sees the home folder (Z:) and the prefix: an installer elsewhere goes into the prefix first
+    local tmp=
+    exe="$(readlink -f "$exe")"
+    if [[ "$exe" != "$HOME"/* ]]; then
+        tmp="$WINEPREFIX/drive_c/windows/temp/$name"
+        mkdir -p "${tmp%/*}" && cp -f "$exe" "$tmp" && exe="$tmp"
+    fi
     stop_wine
     local root='C:\Program Files\CHITUBOX' rc prog="${EXE%/*}" old="$DATA/.previous"
-    rm -f "$DATA/.install-rc"
     (
         # An update: CHITUBOX's installer would start the old one's uninstaller and wait for its wizard. So
         # remove it first, with its own uninstaller (that leaves the settings in AppData), and keep its files
         # (hard links) to put back when the new one fails
         if [ -f "$prog/Uninstall.exe" ]; then
+            busy "Removing CHITUBOX $(chitubox_version) (your settings stay)…"
             rm -rf "$old"
             cp -al "$prog" "$old" 2>>"$LOG" || rm -rf "$old"
             "$WINE" "$prog/Uninstall.exe" purge --confirm-command >> "$LOG" 2>&1
             "$WINESERVER" -w
-            [ ! -f "$prog/Uninstall.exe" ] || { echo uninstall > "$DATA/.install-rc"; exit; }
+            [ ! -f "$prog/Uninstall.exe" ] || exit 99
         fi
+        busy "Installing $name (a few minutes)…"
         "$WINE" "$exe" install --root "$root" --accept-licenses --accept-messages --confirm-command >> "$LOG" 2>&1
-        echo $? > "$DATA/.install-rc"
-    ) | if gui; then zenity --progress --pulsate --auto-close --no-cancel --title=ChituLinux \
-            --text="Installing $(basename "$exe")…" 2>/dev/null; else cat; fi
-    rc="$(cat "$DATA/.install-rc" 2>/dev/null)"; rm -f "$DATA/.install-rc"
+    )
+    rc=$?
     "$WINESERVER" -w
+    [ -z "$tmp" ] || rm -f "$tmp"
     if [ "$rc" != 0 ] || [ ! -f "$EXE" ]; then
         msg "installing failed ($rc)"
         if [ -d "$old" ]; then
@@ -471,6 +497,7 @@ start_chitubox()  # FILE...
 {
     [ -f "$EXE" ] || install_chitubox
     offer_chitubox_update
+    busy "Starting CHITUBOX…"
     fix_drives
     apply_scale
     setup_gpu
@@ -491,6 +518,12 @@ start_chitubox()  # FILE...
     start_update_check
     start_rpp_bridge
     cd "$WINEPREFIX/drive_c/Program Files/CHITUBOX" || exit 1
+    # the dialog until CHITUBOX's first window (its splash) is there; exec keeps this PID for Wine
+    if [ -n "$BUSY" ]; then
+        { python3 -I "$TOOLS/wait-window.py" chitubox.exe $$ 120; kill "$BUSY_PID"; } 2>>"$LOG" &
+        exec {BUSY}>&-
+        BUSY= BUSY_PID=
+    fi
     exec "$WINE" "$EXE" "${args[@]}"
 }
 
@@ -517,7 +550,7 @@ case "${1:-}" in
                    ''|*[!0-9]*) msg "usage: scale PERCENT|auto"; exit 1 ;;
                    *) echo "$2" > "$DATA/scale"; msg "scale $2% from the next start" ;;
                esac ;;
-    winecfg|regedit) make_prefix; exec "$WINE" "$1" ;;
+    winecfg|regedit) make_prefix; busy_end; exec "$WINE" "$1" ;;
     shell)     msg "WINEPREFIX=$WINEPREFIX, wine is on PATH"; exec "${SHELL:-bash}" ;;
     stop)      stop_wine ;;
     integrate) integrate ;;
