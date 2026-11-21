@@ -41,7 +41,7 @@ tar -xzf "$tarball" -C "$TOOLS/dxvk" --strip-components=1 \
 chmod +x "$BUILD/appimagetool.AppImage"
 
 # --- ChituLinux itself ------------------------------------------------------------------------------
-cp "$TOP/tools/settings.py" "$TOP/tools/exeicon.py" "$TOP/tools/chitulinux-release.py" "$TOP/tools/rpp-bridge.py" "$TOP/tools/wait-window.py" "$TOP/tools/desktop-dpi" "$TOOLS/"
+cp "$TOP/tools/settings.py" "$TOP/tools/exeicon.py" "$TOP/tools/chitulinux-release.py" "$TOP/tools/rpp-bridge.py" "$TOP/tools/wait-window.py" "$TOP/tools/busy.py" "$TOP/tools/desktop-dpi" "$TOOLS/"
 cp "$TOP/VERSION" "$DIR/usr/share/chitulinux/VERSION"
 cp "$TOP/README.md" "$TOP/LICENSE" "$TOP/NOTICE.md" "$DIR/usr/share/doc/chitulinux/"
 cp "$TOP/chitulinux-run" "$DIR/AppRun"

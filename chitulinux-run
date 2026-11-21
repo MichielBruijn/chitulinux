@@ -43,7 +43,7 @@ mkdir -p "$DATA"
 msg() { echo "chitulinux: $*" >&2; }
 gui() { [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v zenity >/dev/null; }
 
-# "busy" dialog (pulsating bar) while there's nothing else to see; busy again only changes its text. zenity
+# "busy" dialog (pulsating bar, no buttons: tools/busy.py) while there's nothing else to see; busy again only changes its text. It
 # doesn't close a pulsating one by itself (nor at EOF, which Wine's processes would hold off anyway): killed
 BUSY= BUSY_PID=
 busy()  # TEXT
@@ -51,7 +51,7 @@ busy()  # TEXT
     msg "$1"
     gui || return 0
     if [ -z "$BUSY" ]; then
-        exec {BUSY}> >(exec zenity --progress --pulsate --no-cancel --width=460 --title=ChituLinux 2>/dev/null)
+        exec {BUSY}> >(exec python3 -I "$TOOLS/busy.py" ChituLinux 2>/dev/null)
         BUSY_PID=$!
     fi
     echo "# $1" >&"$BUSY" 2>/dev/null
